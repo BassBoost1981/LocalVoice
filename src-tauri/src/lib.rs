@@ -1,6 +1,8 @@
 mod audio;
 mod config;
 mod hotkey;
+mod inject;
+mod overlay;
 mod whisper;
 
 use audio::AudioRecorder;
@@ -95,6 +97,10 @@ pub fn run() {
             hotkey::register_hotkey(&handle, &settings.hotkey)
                 .unwrap_or_else(|e| eprintln!("Hotkey error: {}", e));
 
+            // Position overlay window / Overlay-Fenster positionieren
+            overlay::set_overlay_position(&handle, &settings.overlay_position)
+                .unwrap_or_else(|e| eprintln!("Overlay error: {}", e));
+
             // Load whisper model async / Whisper-Modell async laden
             let h = handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -171,6 +177,13 @@ pub fn run() {
                     match result {
                         Ok(Ok(text)) => {
                             println!("Transcribed: {}", text);
+                            if !text.is_empty() {
+                                if let Err(e) = inject::inject_text(&text) {
+                                    eprintln!("Injection failed: {}", e);
+                                    let _ = h.emit("transcription-error",
+                                        &format!("Text kopiert, bitte manuell Ctrl+V: {}", e));
+                                }
+                            }
                             let _ = h.emit("transcription-done", &text);
                         }
                         Ok(Err(e)) => {
