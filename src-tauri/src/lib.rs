@@ -2,12 +2,15 @@ mod audio;
 mod config;
 mod hotkey;
 mod inject;
+mod model_manager;
 mod overlay;
 mod whisper;
 
 use audio::AudioRecorder;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Listener, Manager};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
 struct AppState {
     recorder: Mutex<AudioRecorder>,
@@ -75,6 +78,48 @@ fn set_hotkey(app_handle: tauri::AppHandle, hotkey_str: String) -> Result<(), St
     Ok(())
 }
 
+#[tauri::command]
+async fn download_model_cmd(
+    app_handle: tauri::AppHandle,
+    model: String,
+) -> Result<(), String> {
+    let models_dir = config::get_models_path();
+    model_manager::download_model(app_handle, &model, models_dir).await
+}
+
+#[tauri::command]
+fn get_available_models_cmd() -> Vec<serde_json::Value> {
+    model_manager::get_available_models()
+        .into_iter()
+        .map(|m| {
+            serde_json::json!({
+                "name": m.name,
+                "filename": m.filename,
+                "size_mb": m.size_mb,
+                "downloaded": config::get_models_path().join(&m.filename).exists(),
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn reload_model(
+    model: String,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let model_path = config::get_models_path()
+        .join(format!("ggml-{}.bin", model));
+    if !model_path.exists() {
+        return Err(format!("Model not found: {}", model));
+    }
+    let transcriber = whisper::WhisperTranscriber::new(&model_path)?;
+    state.transcriber.lock().map_err(|e| e.to_string())?.replace(transcriber);
+    let mut settings = config::load_settings();
+    settings.model = model;
+    config::save_settings(&settings);
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -88,6 +133,9 @@ pub fn run() {
             start_recording,
             stop_recording,
             set_hotkey,
+            download_model_cmd,
+            get_available_models_cmd,
+            reload_model,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -120,6 +168,47 @@ pub fn run() {
                     eprintln!("Model not found: {:?} — download via Settings", model_path);
                 }
             });
+
+            // System tray / System-Tray einrichten
+            let settings_item = MenuItem::with_id(app, "settings", "Einstellungen", true, None::<&str>)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Beenden", true, None::<&str>)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
+            let menu = Menu::with_items(app, &[&settings_item, &quit_item])
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
+            TrayIconBuilder::new()
+                .menu(&menu)
+                .tooltip("LocalVoice — Bereit")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "settings" => {
+                        if let Some(win) = app.get_webview_window("settings") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(win) = app.get_webview_window("settings") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                })
+                .build(app)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
             // Wire hotkey events to recording pipeline
             // Hotkey-Events mit Recording-Pipeline verbinden

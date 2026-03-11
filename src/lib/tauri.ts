@@ -22,6 +22,7 @@ export const commands = {
   downloadModel: (model: string) =>
     invoke("download_model_cmd", { model }),
   getAvailableModels: () => invoke<string[]>("get_available_models_cmd"),
+  reloadModel: (model: string) => invoke("reload_model", { model }),
 };
 
 // Events

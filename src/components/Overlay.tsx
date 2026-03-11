@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useRecording, type RecordingState } from "../hooks/useRecording";
 
 function Overlay() {
@@ -19,6 +20,16 @@ function PillWidget({
 }) {
   const isActive = state === "recording" || state === "transcribing";
   const isDone = state === "done";
+  const [fading, setFading] = useState(false);
+
+  // Fade out after 1s in done state / Nach 1s im Done-Zustand ausblenden
+  useEffect(() => {
+    if (state === "done") {
+      const timer = setTimeout(() => setFading(true), 1000);
+      return () => clearTimeout(timer);
+    }
+    setFading(false);
+  }, [state]);
 
   return (
     <div
@@ -31,6 +42,7 @@ function PillWidget({
             ? "w-[180px] h-[44px] border-violet-500/20 bg-violet-500/4"
             : "w-[140px] h-[40px] border-white/8 bg-white/2"
         }
+        ${fading ? "opacity-0 transition-opacity duration-500" : ""}
       `}
       style={{
         animation: isDone ? "pop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)" : undefined,
