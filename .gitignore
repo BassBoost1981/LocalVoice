@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.superpowers/
+.firecrawl/
+
+# Agent/AI config
+.agents/
+.shared/
+.augment/
+.claude/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Env
+.env
+.env.*

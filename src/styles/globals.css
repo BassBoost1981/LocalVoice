@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Lexend";
+  src: url("/Font/Lexend-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --color-bg: #09090b;
+  --color-accent: #6366f1;
+  --color-accent-light: #a78bfa;
+  --color-border: rgba(139, 92, 246, 0.12);
+  --color-recording: #ef4444;
+  --color-done: #22c55e;
+}
+
+body {
+  font-family: "Lexend", sans-serif;
+  background: var(--color-bg);
+  color: white;
+  margin: 0;
+  overflow: hidden;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

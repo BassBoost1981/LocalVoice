@@ -1,0 +1,32 @@
+[package]
+name = "localvoice"
+version = "0.1.0"
+description = "Offline dictation tool powered by whisper.cpp"
+authors = ["LocalVoice"]
+edition = "2021"
+
+[lib]
+name = "localvoice_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+cpal = "0.15"
+rustfft = "6"
+whisper-rs = "0.14"
+arboard = "3"
+reqwest = { version = "0.12", features = ["stream"] }
+futures-util = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
