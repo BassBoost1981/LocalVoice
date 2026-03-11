@@ -1,10 +1,11 @@
 mod audio;
 mod config;
+mod hotkey;
 mod whisper;
 
 use audio::AudioRecorder;
 use std::sync::{Arc, Mutex};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Listener, Manager};
 
 struct AppState {
     recorder: Mutex<AudioRecorder>,
@@ -36,7 +37,6 @@ async fn stop_recording(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<String, String> {
-    // Stop recording and get PCM samples
     let samples = {
         let mut recorder = state.recorder.lock().map_err(|e| e.to_string())?;
         recorder.stop()
@@ -48,12 +48,9 @@ async fn stop_recording(
 
     let settings = config::load_settings();
     let lang = settings.language.clone();
-
-    // Clone state Arc for the blocking task
     let state_clone = state.inner().clone();
 
     // Transcribe in blocking thread (CPU-bound)
-    // Transkription im Blocking-Thread (CPU-intensiv)
     let text = tokio::task::spawn_blocking(move || {
         let guard = state_clone.transcriber.lock().map_err(|e| e.to_string())?;
         let transcriber = guard.as_ref().ok_or("Whisper model not loaded")?;
@@ -62,9 +59,18 @@ async fn stop_recording(
     .await
     .map_err(|e| format!("Task error: {}", e))??;
 
-    // Emit transcription result to frontend
     let _ = app_handle.emit("transcription-done", &text);
     Ok(text)
+}
+
+#[tauri::command]
+fn set_hotkey(app_handle: tauri::AppHandle, hotkey_str: String) -> Result<(), String> {
+    hotkey::unregister_all(&app_handle)?;
+    hotkey::register_hotkey(&app_handle, &hotkey_str)?;
+    let mut settings = config::load_settings();
+    settings.hotkey = hotkey_str;
+    config::save_settings(&settings);
+    Ok(())
 }
 
 pub fn run() {
@@ -79,11 +85,18 @@ pub fn run() {
             save_settings_cmd,
             start_recording,
             stop_recording,
+            set_hotkey,
         ])
         .setup(|app| {
-            // Load whisper model on startup if available
-            // Whisper-Modell beim Start laden (falls vorhanden)
             let handle = app.handle().clone();
+            let settings = config::load_settings();
+
+            // Register global hotkey / Globalen Hotkey registrieren
+            hotkey::register_hotkey(&handle, &settings.hotkey)
+                .unwrap_or_else(|e| eprintln!("Hotkey error: {}", e));
+
+            // Load whisper model async / Whisper-Modell async laden
+            let h = handle.clone();
             tauri::async_runtime::spawn(async move {
                 let settings = config::load_settings();
                 let model_path = config::get_models_path()
@@ -92,7 +105,7 @@ pub fn run() {
                     match whisper::WhisperTranscriber::new(&model_path) {
                         Ok(t) => {
                             println!("Whisper model loaded: {}", settings.model);
-                            let state: Arc<AppState> = handle.state::<Arc<AppState>>().inner().clone();
+                            let state: Arc<AppState> = h.state::<Arc<AppState>>().inner().clone();
                             state.transcriber.lock().unwrap().replace(t);
                         }
                         Err(e) => eprintln!("Failed to load whisper: {}", e),
@@ -101,6 +114,78 @@ pub fn run() {
                     eprintln!("Model not found: {:?} — download via Settings", model_path);
                 }
             });
+
+            // Wire hotkey events to recording pipeline
+            // Hotkey-Events mit Recording-Pipeline verbinden
+            let h = handle.clone();
+            let state: Arc<AppState> = handle.state::<Arc<AppState>>().inner().clone();
+
+            // Hotkey pressed -> start recording
+            let h1 = h.clone();
+            let s1 = state.clone();
+            app.listen("recording-started", move |_| {
+                let h = h1.clone();
+                let s = s1.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut recorder = s.recorder.lock().unwrap();
+                    if let Err(e) = recorder.start(h.clone()) {
+                        eprintln!("Failed to start recording: {}", e);
+                    }
+                });
+            });
+
+            // Hotkey released -> stop recording + transcribe
+            let h2 = h.clone();
+            let s2 = state.clone();
+            app.listen("recording-stopped", move |_| {
+                let h = h2.clone();
+                let s = s2.clone();
+                tauri::async_runtime::spawn(async move {
+                    // Stop and get audio samples
+                    let samples = {
+                        let mut recorder = s.recorder.lock().unwrap();
+                        recorder.stop()
+                    };
+
+                    if samples.is_empty() {
+                        return;
+                    }
+
+                    let _ = h.emit("transcribing-started", ());
+
+                    // Transcribe in blocking thread
+                    let s_clone = s.clone();
+                    let settings = config::load_settings();
+                    let lang = settings.language.clone();
+
+                    let result = tokio::task::spawn_blocking(move || {
+                        let guard = s_clone.transcriber.lock().unwrap();
+                        if let Some(transcriber) = guard.as_ref() {
+                            transcriber.transcribe(&samples, &lang)
+                        } else {
+                            Err("Model not loaded".to_string())
+                        }
+                    })
+                    .await;
+
+                    match result {
+                        Ok(Ok(text)) => {
+                            println!("Transcribed: {}", text);
+                            let _ = h.emit("transcription-done", &text);
+                        }
+                        Ok(Err(e)) => {
+                            eprintln!("Transcription error: {}", e);
+                            let _ = h.emit("transcription-error", &e);
+                        }
+                        Err(e) => {
+                            let msg = format!("Task error: {}", e);
+                            eprintln!("{}", msg);
+                            let _ = h.emit("transcription-error", &msg);
+                        }
+                    }
+                });
+            });
+
             Ok(())
         })
         .run(tauri::generate_context!())
